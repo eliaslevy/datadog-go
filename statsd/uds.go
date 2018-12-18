@@ -1,6 +1,7 @@
 package statsd
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -50,8 +51,9 @@ func (w *udsWriter) Write(data []byte) (int, error) {
 
 	n, e := conn.Write(data)
 
-	if err, isNetworkErr := err.(net.Error); !isNetworkErr || !err.Timeout() {
+	if err, isNetworkErr := err.(net.Error); !isNetworkErr || !err.Temporary() {
 		// err is not a timeout, Statsd server disconnected, retry connecting at next packet
+		fmt.Println(isNetworkErr, err.Temporary(), "Reset")
 		w.unsetConnection()
 		return 0, e
 	}
