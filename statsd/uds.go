@@ -55,7 +55,7 @@ func (w *udsWriter) Write(data []byte) (int, error) {
 		w.unsetConnection()
 		return 0, e
 	}
-	return n, nil
+	return n, e
 }
 
 func (w *udsWriter) Close() error {
