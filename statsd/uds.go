@@ -92,7 +92,5 @@ func (w *udsWriter) ensureConnection() (net.Conn, error) {
 }
 
 func (w *udsWriter) unsetConnection() {
-	w.Lock()
-	defer w.Unlock()
 	w.conn = nil
 }
