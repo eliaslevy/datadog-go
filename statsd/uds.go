@@ -50,8 +50,8 @@ func (w *udsWriter) Write(data []byte) (int, error) {
 
 	n, e := conn.Write(data)
 
-	if e != nil {
-		// Statsd server disconnected, retry connecting at next packet
+	if err, isNetworkErr := err.(net.Error); !isNetworkErr || !err.Timeout() {
+		// err is not a timeout, Statsd server disconnected, retry connecting at next packet
 		w.unsetConnection()
 		return 0, e
 	}
@@ -92,5 +92,7 @@ func (w *udsWriter) ensureConnection() (net.Conn, error) {
 }
 
 func (w *udsWriter) unsetConnection() {
+	w.Lock()
+	defer w.Unlock()
 	w.conn = nil
 }
