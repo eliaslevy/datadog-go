@@ -702,7 +702,7 @@ func TestSendUDSErrors(t *testing.T) {
 	}
 	err = client.sendMsg([]byte(message))
 	if err != nil {
-		t.Errorf("Expected no error to be returned when server is listening, got: %s", err.Error())
+		t.Fatalf("Expected no error to be returned when server is listening, got: %s", err.Error())
 	}
 	bytes := make([]byte, 1024)
 	n, err := server.Read(bytes)
