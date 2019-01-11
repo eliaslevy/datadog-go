@@ -3,7 +3,6 @@ package statsd
 import (
 	"fmt"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -21,7 +20,9 @@ type udsWriter struct {
 	conn net.Conn
 	// write timeout
 	writeTimeout time.Duration
-	sync.RWMutex // used to lock conn / writer can replace it
+
+	datagramQueue chan []byte
+	stopChan      chan struct{}
 }
 
 // New returns a pointer to a new udsWriter given a socket file path as addr.
@@ -30,9 +31,30 @@ func newUdsWriter(addr string) (*udsWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Defer connection to first Write
-	writer := &udsWriter{addr: udsAddr, conn: nil, writeTimeout: defaultUDSTimeout}
+
+	writer := &udsWriter{
+		addr:          udsAddr,
+		conn:          nil,
+		writeTimeout:  defaultUDSTimeout,
+		datagramQueue: make(chan []byte, 1024),
+		stopChan:      make(chan struct{}),
+	}
+	go writer.sendLoop()
 	return writer, nil
+}
+
+func (w *udsWriter) sendLoop() {
+	for {
+		select {
+		case datagram := <-w.datagramQueue:
+			_, err := w.write(datagram)
+			if err != nil {
+				fmt.Println("dropped")
+			}
+		case <-w.stopChan:
+			return
+		}
+	}
 }
 
 // SetWriteTimeout allows the user to set a custom write timeout
@@ -44,21 +66,22 @@ func (w *udsWriter) SetWriteTimeout(d time.Duration) error {
 // Write data to the UDS connection with write timeout and minimal error handling:
 // create the connection if nil, and destroy it if the statsd server has disconnected
 func (w *udsWriter) Write(data []byte) (int, error) {
+	select {
+	case w.datagramQueue <- data:
+		return len(data), nil
+	default:
+		return 0, fmt.Errorf("uds write queue")
+	}
+}
+
+func (w *udsWriter) write(data []byte) (int, error) {
 	conn, err := w.ensureConnection()
 	if err != nil {
 		return 0, err
 	}
 
-	errChan := make(chan error, 1)
-	go func() {
-		_, err := conn.Write(data)
-		errChan <- err
-	}()
-	select {
-	case <-time.After(w.writeTimeout):
-		return 0, fmt.Errorf("Write timeout exceeded")
-	case err = <-errChan:
-	}
+	w.conn.SetWriteDeadline(time.Now().Add(w.writeTimeout))
+	n, err := conn.Write(data)
 
 	if e, isNetworkErr := err.(net.Error); !isNetworkErr || !e.Temporary() {
 		// err is not temporary, Statsd server disconnected, retry connecting at next packet
@@ -66,10 +89,11 @@ func (w *udsWriter) Write(data []byte) (int, error) {
 		return 0, e
 	}
 
-	return len(data), err
+	return n, err
 }
 
 func (w *udsWriter) Close() error {
+	close(w.stopChan)
 	if w.conn != nil {
 		return w.conn.Close()
 	}
@@ -78,17 +102,13 @@ func (w *udsWriter) Close() error {
 
 func (w *udsWriter) ensureConnection() (net.Conn, error) {
 	// Check if we've already got a socket we can use
-	w.RLock()
 	currentConn := w.conn
-	w.RUnlock()
 
 	if currentConn != nil {
 		return currentConn, nil
 	}
 
 	// Looks like we might need to connect - try again with write locking.
-	w.Lock()
-	defer w.Unlock()
 	if w.conn != nil {
 		return w.conn, nil
 	}
@@ -102,7 +122,5 @@ func (w *udsWriter) ensureConnection() (net.Conn, error) {
 }
 
 func (w *udsWriter) unsetConnection() {
-	w.Lock()
-	defer w.Unlock()
 	w.conn = nil
 }
