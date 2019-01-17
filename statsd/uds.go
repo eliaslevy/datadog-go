@@ -37,7 +37,7 @@ func newUdsWriter(addr string) (*udsWriter, error) {
 		addr:          udsAddr,
 		conn:          nil,
 		writeTimeout:  defaultUDSTimeout,
-		datagramQueue: make(chan []byte, 1024),
+		datagramQueue: make(chan []byte, 8192),
 		stopChan:      make(chan struct{}),
 	}
 	go writer.sendLoop()
@@ -48,9 +48,11 @@ func (w *udsWriter) sendLoop() {
 	for {
 		select {
 		case datagram := <-w.datagramQueue:
-			_, err := w.write(datagram)
-			if err != nil {
-				w.droppedDatagrams++
+			for {
+				_, err := w.write(datagram)
+				if err == nil {
+					break
+				}
 			}
 		case <-w.stopChan:
 			return
