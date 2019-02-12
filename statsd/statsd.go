@@ -100,6 +100,8 @@ type Client struct {
 	buffer       bytes.Buffer
 	stop         chan struct{}
 	sync.Mutex
+	// Abuse sync.Pool to maintain "per-CPU" RNG
+	rngPool sync.Pool
 }
 
 // New returns a pointer to a new Client given an addr in the format "hostname:port" or
@@ -320,12 +322,23 @@ func (c *Client) sendMsg(msg []byte) error {
 	return err
 }
 
+func (c * Client) randFloat64() float64 {
+	v := c.rngPool.Get()
+	if v == nil {
+		v = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	r := v.(*rand.Rand)
+	x := r.Float64()
+	c.rngPool.Put(r)
+	return x
+}
+
 // send handles sampling and sends the message over UDP. It also adds global namespace prefixes and tags.
 func (c *Client) send(name string, value interface{}, suffix []byte, tags []string, rate float64) error {
 	if c == nil {
 		return nil
 	}
-	if rate < 1 && rand.Float64() > rate {
+	if rate < 1 && c.randFloat64() > rate {
 		return nil
 	}
 	data := c.format(name, value, suffix, tags, rate)
